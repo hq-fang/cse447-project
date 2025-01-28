@@ -4,4 +4,6 @@ output/
 submit/
 submit.zip
 char_gpt2_finetune
-pred.txt
+data
+submit.sh
+upload.py
