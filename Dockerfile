@@ -1,7 +1,13 @@
-FROM pytorch/pytorch:1.6.0-cuda10.1-cudnn7-runtime
+FROM pytorch/pytorch:2.1.2-cuda12.1-cudnn8-devel
 RUN mkdir /job
 WORKDIR /job
 VOLUME ["/job/data", "/job/src", "/job/work", "/job/output"]
 
 # You should install any dependencies you need here.
-# RUN pip install tqdm
+RUN pip install --upgrade pip
+RUN pip install torch
+RUN pip install transformers
+RUN pip install --upgrade datasets
+RUN pip install pandas
+RUN pip install argparse
+RUN pip install accelerate
