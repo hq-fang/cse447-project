@@ -29,14 +29,23 @@ class CharDataset(Dataset):
             "labels": torch.tensor(y, dtype=torch.long)
         }
 
+def preprocess_text(sentence, char):
+    """
+    Removes non-English words while keeping numbers and punctuation.
+    """
+    # Filter non-English words, keep numbers & punctuation
+    filtered_tokens = [word for word in sentence if word in char]
+
+    return "".join(filtered_tokens)
+
 # Define the main training function
 def main(args):
     # Load the dataset
     # dataset = load_dataset("CohereForAI/aya_dataset")
-    dataset = load_dataset('zeroshot/twitter-financial-news-topic')
+    dataset = load_dataset("sentence-transformers/wikipedia-en-sentences")
     aya_dataset = dataset["train"]
-    num_data = len(aya_dataset["text"])
-    train_texts = aya_dataset[:]["text"]
+    # num_data = len(aya_dataset["text"])
+    # train_texts = aya_dataset[:]["text"]
 
     # df = pd.DataFrame(dataset["train"])  # Convert to pandas DataFrame
 
@@ -45,8 +54,14 @@ def main(args):
     # train_texts = english_data['inputs'].tolist()
 
     # Define the character set and tokenizer mapping
-    chars = set([c for s in train_texts for c in s])
-    chars.update(list("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 \n!.,?;:'\"()-"))
+    # chars = set([c for s in train_texts for c in s])
+    chars = set(list("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 \n!.,?;:'\"()-"))
+
+    train_texts = []
+    # dataset too large, choose first 100k
+    for sentence in aya_dataset['sentence'][:100000]:
+        train_texts.append(preprocess_text(sentence, chars))
+
     char_to_idx = {ch: i for i, ch in enumerate(chars)}
     idx_to_char = {i: ch for i, ch in enumerate(chars)}
 
@@ -55,7 +70,7 @@ def main(args):
     full_dataset = CharDataset(train_texts, seq_length, char_to_idx)
 
     # Split into train/validation sets
-    train_size = int(0.8 * len(full_dataset))
+    train_size = int(0.99 * len(full_dataset))
     val_size = len(full_dataset) - train_size
     train_dataset, val_dataset = torch.utils.data.random_split(full_dataset, [train_size, val_size])
 
