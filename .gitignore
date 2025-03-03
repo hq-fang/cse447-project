@@ -1,10 +1,10 @@
 *.py[cod]
 work/
+work_prev/
 output/
 submit/
 submit.zip
 char_gpt2_finetune
-checkpoints
 data
 submit.sh
 scripts.sh
