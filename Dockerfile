@@ -11,3 +11,5 @@ RUN pip install --upgrade datasets
 RUN pip install pandas
 RUN pip install argparse
 RUN pip install 'accelerate>=0.26.0'
+RUN pip install sentencepiece
+RUN pip install bitsandbytes

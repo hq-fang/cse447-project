@@ -3,9 +3,10 @@
 import argparse
 import torch
 import random
-from transformers import GPT2LMHeadModel, GPT2Tokenizer
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 import time
+import re
 
 tokenizer = None
 model = None
@@ -48,6 +49,91 @@ def fill_random_chars(n=1):
     alphabet = "abcdefghijklmnopqrstuvwxyz"
     return "".join(random.choice(alphabet) for _ in range(n))
 
+
+def remove_special_chars(text):
+    # This regex removes characters that are not word characters or whitespace.
+    # In Unicode mode, \w includes letters (from many languages), digits, and the underscore.
+    # If you don't want the underscore, you can remove it afterward.
+    text = text.replace('\n', '')
+    cleaned = re.sub(r'[^\w\s]', '', text, flags=re.UNICODE)
+    # cleaned = re.sub(r'\d', '', cleaned)  # Remove numbers
+    # Optionally, remove underscore if you consider it a special character:
+    cleaned = cleaned.replace('_', '')
+    return cleaned
+
+
+def get_candidate_words_sub(context_text, prefix, top_k, device):
+    """
+    Given a context text, returns candidate words that start with the specified prefix 
+    from the top-k next-token predictions.
+
+    Parameters:
+        context_text (str): The input context text to encode.
+        prefix (str): The prefix to filter candidate tokens.
+        top_k (int): Number of top tokens to retrieve.
+        device (torch.device): The device to run the computation on.
+
+    Returns:
+        list of tuples: Each tuple contains a candidate word and its corresponding probability.
+    """
+    # Encode the context text
+    context_ids = tokenizer.encode(context_text, return_tensors="pt")
+    if torch.cuda.is_available():
+        context_ids = context_ids.to(device)
+
+    # Get next-token logits from the model
+    logits = get_next_token_logits(context_ids)
+    
+    # Get top-k token IDs (and their probabilities) for the very next token
+    token_id_probs = get_top_k_tokens(logits, k=top_k)
+
+    # Filter to those tokens that start with the given prefix (case-insensitive)
+    candidate_words = []
+    for t_id, prob in token_id_probs:
+        decoded = decode_token(t_id)  # This returns the raw token string
+        if not decoded.startswith(" "):
+            decoded = remove_special_chars(decoded.strip()) 
+            if len(decoded) > 0:
+                candidate_words.append((decoded, prob))
+
+    return candidate_words
+
+
+def get_candidate_words_full(context_text, prefix, top_k, device):
+    """
+    Given a context text, returns candidate words that start with the specified prefix 
+    from the top-k next-token predictions.
+
+    Parameters:
+        context_text_sub (str): The input context text to encode.
+        prefix (str): The prefix to filter candidate tokens.
+        top_k (int): Number of top tokens to retrieve.
+        device (torch.device): The device to run the computation on.
+
+    Returns:
+        list of tuples: Each tuple contains a candidate word and its corresponding probability.
+    """
+    # Encode the context text
+    context_ids = tokenizer.encode(context_text, return_tensors="pt")
+    if torch.cuda.is_available():
+        context_ids = context_ids.to(device)
+
+    # Get next-token logits from the model
+    logits = get_next_token_logits(context_ids)
+    
+    # Get top-k token IDs (and their probabilities) for the very next token
+    token_id_probs = get_top_k_tokens(logits, k=top_k)
+
+    # Filter to those tokens that start with the given prefix (case-insensitive)
+    candidate_words = []
+    for t_id, prob in token_id_probs:
+        decoded = decode_token(t_id).strip()  # remove leading spaces
+        if len(decoded) > len(prefix) and decoded.lower().startswith(prefix.lower()):
+            candidate_words.append((decoded, prob))
+
+    return candidate_words
+
+
 def get_gpt2_suggestions(user_input, top_k=50):
     """
     - Split user_input into context (all but last word) and prefix (last word).
@@ -59,6 +145,7 @@ def get_gpt2_suggestions(user_input, top_k=50):
     """
 
     try:
+        words_raw = user_input.strip()
         words = user_input.strip().split()
         if len(words) < 1:
             # If there's only one word or none, short-circuit
@@ -73,40 +160,51 @@ def get_gpt2_suggestions(user_input, top_k=50):
 
         elif len(words) == 1:
             prefix = words[-1]
-            context_text = "."
+            context_text_sub = words_raw
+            context_text_full = None
         else:
             prefix = words[-1]
-            context_text = " ".join(words[:-1])
+            context_text_full = " ".join(words[:-1])
+            context_text_sub = words_raw
 
-        # Encode the context text
-        context_ids = tokenizer.encode(context_text, return_tensors="pt")
-        if torch.cuda.is_available():
-            context_ids = context_ids.to(device)
+        # print(context_text_full)
 
-        # Get next-token logits from the model
-        logits = get_next_token_logits(context_ids)
-        
-        # Get top-k token IDs (and their probabilities) for the *very next* token
-        token_id_probs = get_top_k_tokens(logits, k=top_k)
+        candidate_words_sub = get_candidate_words_sub(context_text_sub, prefix, top_k, device)
+        candidate_words_sub = [(prefix + wd, prob) for wd, prob in candidate_words_sub]
+        candidate_words_sub.sort(key=lambda x: x[1], reverse=True)
 
-        # Filter to those that start with the prefix (case-insensitive)
-        candidate_words = []
-        for t_id, prob in token_id_probs:
-            decoded = decode_token(t_id).strip()  # remove leading spaces
-            if len(decoded) > len(prefix) and decoded.lower().startswith(prefix.lower()):
-                candidate_words.append((decoded, prob))
+        if context_text_full:
+            candidate_words_full = get_candidate_words_full(context_text_full, prefix, top_k, device)
+        else:
+            candidate_words_full = []
+        candidate_words_full.sort(key=lambda x: x[1], reverse=True)
 
+        # print(candidate_words_full)
+        # print(candidate_words_sub[:10])
+
+        # candidate_words = candidate_words_sub + candidate_words_full
         # Sort by probability descending
-        candidate_words.sort(key=lambda x: x[1], reverse=True)
+        # candidate_words.sort(key=lambda x: x[1], reverse=True)
+        
         # print(candidate_words)
-        # Take top 3
+
+        # word-based
         results = []
-        for word, prob in candidate_words:
+        for word, prob in candidate_words_full:
             if len(results) == 3:
                 break
             char = word[len(prefix)].lower()
             if char not in results:
                 results.append(char)
+
+        # subword-based
+        if len(results) < 3:
+            for word, prob in candidate_words_sub:
+                if len(results) == 3:
+                    break
+                char = word[len(prefix)].lower()
+                if char not in results:
+                    results.append(char)
 
         # If none match, fill all with random single chars
         if len(results) == 0:
@@ -133,6 +231,8 @@ def get_gpt2_suggestions(user_input, top_k=50):
         return results
     
     except Exception as e:
+
+        # print(e)
 
         results = []
         while len(results) < 3:
@@ -163,21 +263,29 @@ def process_file(input_path, output_path, top_k):
 
 
 def main(args):
-    global tokenizer, model, device
+    global tokenizer, model, device #, single_char_token_ids
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     model_name = args.model_dir
-    tokenizer = GPT2Tokenizer.from_pretrained(model_name, local_files_only=True)
-    model = GPT2LMHeadModel.from_pretrained(model_name, local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
+    if torch.cuda.is_available():
+        model = AutoModelForCausalLM.from_pretrained(model_name, local_files_only=True, torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2")
+    else:
+        model = AutoModelForCausalLM.from_pretrained(model_name, local_files_only=True, torch_dtype=torch.bfloat16)
+    
+    # model_name = "Qwen/Qwen2.5-3B"
+    # model_name = "meta-llama/Llama-3.2-3B"
+    # model_name = "work/checkpoints-llama-3"
+    # model_name = "work/checkpoints-llama-3"
+    # tokenizer = AutoTokenizer.from_pretrained(model_name)
+    # # model = AutoModelForCausalLM.from_pretrained(model_name, device_map=device)
+    # model = AutoModelForCausalLM.from_pretrained(model_name, load_in_4bit=True, device_map=device)
 
-    # model_name = "gpt2-medium"
-    # tokenizer = GPT2Tokenizer.from_pretrained(model_name)
-    # model = GPT2LMHeadModel.from_pretrained(model_name)
-    # local_model_path = "./checkpoints"
+    # local_model_path = "work/checkpoints-qwen-3"
     # tokenizer.save_pretrained(local_model_path)
     # model.save_pretrained(local_model_path)
 
     model.eval()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if torch.cuda.is_available():
         model.to(device)
 
