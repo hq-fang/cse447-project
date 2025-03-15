@@ -13,7 +13,7 @@ printf "Haoquan Fang,hqfang\nWilliam Tsai,tsai726\nFrank Li,angli23" > submit/te
 
 # make predictions on example data submit it in pred.txt
 # python src/myprogram.py test --work_dir work --test_data example/input.txt --test_output submit/pred.txt
-python src/generate_word.py --model_dir work/checkpoints-qwen --top_k 500 --test_input example/input.txt --test_output submit/pred.txt
+python src/generate_word_plus_char.py --model_dir work/checkpoints-llama --top_k 100 --threshold 0.0 --test_input example/input.txt --test_output submit/pred.txt
 
 # submit docker file
 cp Dockerfile submit/Dockerfile
